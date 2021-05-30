@@ -1,6 +1,5 @@
-"""
-SCRIPT FOR FUNCTION WRAPPERS
-"""
+# SCRIPT FOR FUNCTION WRAPPERS
+
 
 # import shutil
 # import requests
@@ -17,6 +16,8 @@ from colorspace.colorlib import HCL
 
 # pip install yahoofinancials
 from yahoofinancials import YahooFinancials
+# from yahoofinance import BalanceSheet
+# import yfinance as yf
 
 
 def gg_color_hue(n):
@@ -63,16 +64,37 @@ def idx_first(df,cn_gg, cn_idx, cn_val):
   return df
 
 # ---- Get the stock price history --- #
-def get_YahooFinancials(ticker, d1, d2):
-  cn_keep = ['formatted_date','open']
+# ticker, d1, d2, dividend, balance = 'NWH-UN.TO', '2020-01-01', '2021-06-01', True, True
+def get_YahooFinancials(ticker, d1, d2, dividend=True, balance=True):
+  di = {'formatted_date':'date','open':'price','amount':'dividend'}
+  # (1) Get price data
+  cn_price = ['formatted_date','open']
   stock = YahooFinancials(ticker)
-  monthly = stock.get_historical_price_data(d1, d2, 'monthly')[ticker]
-  tmp = pd.DataFrame(monthly['prices'])[cn_keep]
-  tmp.rename(columns={'formatted_date':'date','open':'price'},inplace=True)
-  tmp = tmp.assign(ticker=ticker, date=lambda x: pd.to_datetime(x.date))
-  tmp = add_date_int(tmp)
-  tmp = tmp[tmp.day == 1].drop(columns=['day'])
-  return tmp
+  price = stock.get_historical_price_data(d1, d2, 'monthly')[ticker]
+  price = pd.DataFrame(price['prices'])[cn_price]
+  price = price.rename(columns=di).assign(ticker=ticker)
+  price.date = pd.to_datetime(price.date)
+  price = add_date_int(price)#.drop(columns=['day','date'])
+  price = price.query('day == 1').reset_index(None,True).drop(columns='day')
+  assert not (price.year + price.month/100).duplicated().any()
+  assert price.price.notnull().all()
+  # (2) Get dividend data
+  if dividend:
+    cn_dividend = ['formatted_date','amount']
+    dividend = stock.get_daily_dividend_data(d1, d2)[ticker]
+    dividend = pd.DataFrame(dividend)[cn_dividend]
+    dividend.rename(columns=di,inplace=True)
+    dividend.date = pd.to_datetime(dividend.date)
+    dividend = add_date_int(dividend)
+    dividend = dividend.groupby(['year','month']).dividend.sum().reset_index()
+    price = price.merge(dividend,'left',['year','month']) # merge
+  return price
+
+# COMPARE YAHOOFINANCIALS TO YFINANCE
+# ticker = 'PRV-UN.TO'
+def get_yfinance():
+  1
+
 
 
 # ---- Add YMD to DataFrame --- #
@@ -92,4 +114,16 @@ def makeifnot(path):
     else:
         print('path already exists: %s' % path)
 
+  # # (3) Get balance sheet
+  # # if balance:
+  # # stock.get_financial_stmts(frequency='annual',statement_type='balance')
+  # msft = yf.Ticker('MFST')
+  # msft.financials
+  # bsheet = BalanceSheet(ticker).to_dfs()
+  # tmp_lia = bs['Liabilities'].reset_index()
+  # tmp_lia = tmp_lia[tmp_lia.Item == 'Total Liabilities'].melt('Item',None,'date','liability').drop(columns=['Item'])
+  # tmp_asset = bs['Assets'].reset_index()
+  # tmp_asset = tmp_asset[tmp_asset.Item == 'Total Assets'].melt('Item',None,'date','asset').drop(columns=['Item'])
+  # tmp_balance = tmp_asset.merge(tmp_lia)
+  # tmp4 = tmp_balance.assign(year=lambda x: pd.to_datetime(x.date).dt.strftime('%Y').astype(int)).drop(columns=['date'])
 
