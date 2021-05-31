@@ -11,7 +11,8 @@ from stats_can import StatsCan
 sc = StatsCan()
 import pickle
 
-from support_funs import add_date_int, get_YahooFinancials, idx_first, rm_if_exists
+#get_YahooFinancials, get_yfinance
+from support_funs import add_date_int, get_price_dividend, idx_first, rm_if_exists
 
 dir_base = os.getcwd()
 
@@ -21,124 +22,6 @@ dstart_dt = pd.to_datetime(dstart)
 ystart = int(pd.to_datetime(dstart).strftime('%Y'))
 dnow = datetime.now().strftime('%Y-%m-%d')
 print('Current date: %s' % dnow)
-
-
-#########################
-### --- (6) REITS --- ###
-
-di_tt_reit = {'Office':'Commercial', 'Hotels':'Commercial', 'Diversified':'Both',
-         'Residential':'Residential', 'Retail':'Commercial', 
-         'Healthcare':'Commercial', 'Industrial':'Commercial'}
-
-# (i) REIT list
-lnk = 'https://raw.githubusercontent.com/ErikinBC/gists/master/data/reit_list.csv'
-dat_reit = pd.read_csv(lnk,header=None).iloc[:,0:3]
-dat_reit.columns = ['name', 'ticker', 'tt']
-dat_reit = dat_reit.assign(ticker = lambda x: x.ticker.str.replace('.','-',regex=False) + '.TO')
-# Remove certain REITS
-drop_ticker = ['SRT-UN.TO', 'SMU-UN.TO']
-dat_reit = dat_reit.query('~ticker.isin(@drop_ticker)',engine='python').reset_index(None,True)
-di_ticker = {'FCD-UN.TO':'FCD-UN.V', 'FRO-UN.TO':'FRO-UN.V'}
-dat_reit.ticker = [di_ticker[tick] if tick in di_ticker else tick  for tick in dat_reit.ticker]
-smatch = 'REIT|Properties|Residences|Property|Trust|Industrial|Commercial|North American'
-dat_reit['name2'] = dat_reit.name.str.replace(smatch,'',regex=True).str.strip().replace('\\s{2,}',' ',regex=True)
-n_reit = dat_reit.shape[0]
-print('Number of reits: %i' % n_reit)
-
-# (ii) Load data
-holder = []
-for ii, rr in dat_reit.iterrows():
-  name, ticker, tt = rr['name'], rr['ticker'], rr['tt']
-  print('Stock: %s (%i of %i)' % (ticker, ii+1, n_reit))
-  # (i) monthly price & dividends
-  tmp_df = get_YahooFinancials(ticker, dstart, dnow)
-  holder.append(tmp_df)
-df_reit = pd.concat(holder).reset_index(None, True)
-df_reit.dividend = df_reit.dividend.fillna(0)
-
-# (iii) Clean up dividend history
-df_reit.groupby(['ticker','year']).dividend.sum().reset_index().query('dividend==0')
-
-
-qq = df_reit.groupby(['ticker','year']).apply(lambda x: 
-  pd.Series({'price':x.price.mean(),'dividend':x.dividend.sum()}))
-qq = qq.assign(pct=lambda x: x.dividend/x.price).reset_index()
-qq.sort_values('pct',ascending=False)
-
-qq.query('ticker == "KMP-UN.TO"')
-
-
-# ---- (1.E) Calculate the dividend rate --- #
-
-
-ann_dividend = df.groupby(['year','name']).dividend.apply(lambda x:
-      pd.Series({'mu':x.mean(),'n':len(x),'null':x.isnull().sum()})).reset_index()
-ann_dividend = ann_dividend.pivot_table('dividend',['year','name'],'level_2').reset_index().sort_values(['name','year']).reset_index(None,True)
-ann_dividend[['n','null']] = ann_dividend[['n','null']].astype(int)
-ann_dividend = ann_dividend.assign(neff = lambda x: x.n - x.null)
-tmp = ann_dividend[ann_dividend.neff >= 3].groupby(['name','year']).apply(lambda x: 12 * x.mu).reset_index().rename(columns={'mu':'adiv'}) # * (12/(x.n-x.null))
-ann_dividend = ann_dividend.merge(tmp,'left',['name','year'])[['name','year','adiv']].sort_values(['name','year']).reset_index(None,True)
-# Price to dividend ratio
-ann_dividend = ann_dividend.merge(df.groupby(['year','name']).price.mean().reset_index()).assign(rate=lambda x: x.adiv / x.price)
-ann_dividend = ann_dividend.merge(df_reit,'left','name')  #.drop(columns=['ticker'])
-
-
-tmp = ann_dividend[(ann_dividend.rate < 0.2) & (ann_dividend.year >= 2005)].assign(tt = lambda x: x.tt.map(di_tt))
-tmp2 = tmp.groupby('name2').rate.mean().reset_index()
-# Get order
-tmp.name2 = pd.Categorical(tmp.name2,ann_dividend.groupby('name2').rate.mean().reset_index().sort_values('rate',ascending=False).name2)
-plotnine.options.figure_size = (16,10)
-g1 = (ggplot(tmp.sort_values('name2'),aes(x='year',y='rate',color='tt')) + geom_point()  + geom_line() +
-  geom_hline(yintercept=ann_dividend.rate.mean(),color='black') + facet_wrap('~name2',ncol=8) + theme_bw() +
-  ggtitle('Annualized dividend rates since 2005') + scale_y_continuous(limits=[0,0.2],breaks=np.arange(0,0.21,0.05)) +
-  scale_color_discrete(name=' '))
-g1
-
-
-### (4) HOUSE PRICE TRACKING ###
-hp = df.melt(id_vars=['year','month','price','ticker'],value_vars=['canada','toronto'],var_name='city',value_name='hp')
-# Annualized change
-hp = hp[hp.hp.notnull()]
-rho = hp.groupby(['ticker','city']).apply(lambda x: np.corrcoef(x.price, x.hp)[0,1]).reset_index().rename(columns={0:'rho'})
-rho = rho.merge(df_reit).assign(tt2 = lambda x: x.tt.map(di_tt), ticker2= lambda x: x.ticker.str.split('-',1,True).iloc[:,0])
-rho.name2 = pd.Categorical(rho.name2, rho.groupby('name2').rho.mean().reset_index().sort_values('rho',ascending=False).name2)
-
-plotnine.options.figure_size = (10,5)
-g3 = ggplot(rho,aes(x='name2',y='rho',color='tt2',shape='city')) + geom_point() + \
-  ggtitle('Correlation to House Price Index') + labs(y='Correlation') + \
-  theme_bw() + theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + \
-  geom_hline(yintercept=0) + scale_shape_discrete(name=' ',labels=['Canada','Toronto']) + \
-  scale_color_discrete(name=' ')
-g3
-
-### (5) RANKING ACROSS FACTORS
-
-# Average of all annual correlations for Tor+CAD
-rank_rho = rho.groupby('name').rho.mean().reset_index().sort_values('rho',ascending=False).reset_index(None,True)
-rank_rho = rank_rho.assign(rank=np.arange(rank_rho.shape[0])+1,tt='rho').rename(columns={'rho':'metric'})
-# Last year's equity ratio
-rank_equity = equity[equity.year == equity.year.max()][['name','eshare']].sort_values('eshare',ascending=False).reset_index(None,True)
-rank_equity = rank_equity.assign(rank=np.arange(rank_equity.shape[0])+1,tt='eshare').rename(columns={'eshare':'metric'})
-# Last 3 years average dividends
-rank_dividend = ann_dividend[(ann_dividend.year >= (ann_dividend.year.max()-3)) & (ann_dividend.year < ann_dividend.year.max())]
-rank_dividend = rank_dividend.groupby('name').rate.mean().reset_index().sort_values('rate',ascending=False).reset_index(None,True)
-rank_dividend = rank_dividend.assign(rank=np.arange(rank_dividend.shape[0])+1,tt='dividend').rename(columns={'rate':'metric'})
-# Merge
-rank_all = pd.concat([rank_rho, rank_equity, rank_dividend],0).pivot('name','tt','rank').reset_index()
-rank_all = df_reit.merge(rank_all).assign(tt2 = lambda x: x.tt.map(di_tt))
-w_dividend, w_eshare, w_rho = 0.1, 0.3, 0.6
-rank_all = rank_all.assign(total = lambda x: (w_dividend*x.dividend + w_eshare*x.eshare + w_rho*x.rho)/(w_dividend+w_eshare+w_rho)).sort_values('total')
-rank_all = rank_all.reset_index(None,True).assign(total = lambda x: np.round(x.total,1))
-rank_all.name2 = pd.Categorical(rank_all.name2, rank_all.name2[::-1])
-rank_all_long = rank_all.melt(['name2','tt2'],['dividend','eshare','rho','total'],'rank')
-
-plotnine.options.figure_size = (8,8)
-g3 = ggplot(rank_all_long,aes(y='name2',x='value',color='rank',shape='tt2')) + geom_point(size=3) + \
-        scale_color_manual(name='Metric',labels=['Dividend','Equity','Correlation','Total'],values=["#F8766D","#00BA38","#619CFF",'black']) + \
-        theme_bw() + theme(axis_title_y=element_blank()) + \
-        scale_shape_manual(name='Type',values=['$B$','$C$','$R$']) + \
-        labs(x='Rank') + ggtitle('Final Rank of REITs')
-g3
 
 ###############################
 ### --- (1) TERANET HPI --- ###
@@ -245,8 +128,8 @@ df_cpi = df_cpi.assign(cpi = lambda x: x.cpi / x.cpi[0] * 100)
 
 # Get TSX index ticker
 ticker_tsx = '^GSPTSE'
-df_tsx = get_YahooFinancials(ticker_tsx,dstart,dnow,dividend=False)
-df_tsx = df_tsx.drop(columns=['ticker','year','month']).rename(columns={'price':'tsx'})
+df_tsx = get_price_dividend(ticker_tsx,dstart,dnow)
+df_tsx = df_tsx[['date','price']].rename(columns={'price':'tsx'})
 df_tsx = df_tsx.assign(tsx = lambda x: x.tsx / x.tsx[0] * 100)
 df_cpi_tsx = df_cpi.merge(df_tsx,'right','date')
 
@@ -320,10 +203,45 @@ df_mort_tera = idx_first(df_mort_tera.drop(columns=['year','quarter']), 'tt', 'd
 df_mort_tera = df_mort_tera.rename(columns={'value':'idx'}).melt(['tt','date'],None,'msr')
 
 #########################
-### --- (6) SAVE FOR LATER --- ###
+### --- (6) REITS --- ###
 
+di_tt_reit = {'Office':'Commercial', 'Hotels':'Commercial', 'Diversified':'Both',
+         'Residential':'Residential', 'Retail':'Commercial', 
+         'Healthcare':'Commercial', 'Industrial':'Commercial'}
+
+# (i) REIT list
+lnk = 'https://raw.githubusercontent.com/ErikinBC/gists/master/data/reit_list.csv'
+dat_reit = pd.read_csv(lnk,header=None).iloc[:,0:3]
+dat_reit.columns = ['name', 'ticker', 'tt']
+dat_reit = dat_reit.assign(ticker = lambda x: x.ticker.str.replace('.','-',regex=False) + '.TO')
+# Remove certain REITS
+drop_ticker = ['SRT-UN.TO', 'SMU-UN.TO']
+dat_reit = dat_reit.query('~ticker.isin(@drop_ticker)',engine='python').reset_index(None,True)
+di_ticker = {'FCD-UN.TO':'FCD-UN.V', 'FRO-UN.TO':'FRO-UN.V'}
+dat_reit.ticker = [di_ticker[tick] if tick in di_ticker else tick  for tick in dat_reit.ticker]
+smatch = 'REIT|Properties|Residences|Property|Trust|Industrial|Commercial|North American'
+dat_reit['name2'] = dat_reit.name.str.replace(smatch,'',regex=True).str.strip().replace('\\s{2,}',' ',regex=True)
+n_reit = dat_reit.shape[0]
+print('Number of reits: %i' % n_reit)
+
+# (ii) Load data
+holder = []
+for ii, rr in dat_reit.iterrows():
+  name, ticker, tt = rr['name'], rr['ticker'], rr['tt']
+  print('Stock: %s (%i of %i)' % (ticker, ii+1, n_reit))
+  # (i) monthly price & dividends
+  tmp_df = get_price_dividend(ticker, dstart, dnow)
+  holder.append(tmp_df)
+df_reit = pd.concat(holder).reset_index(None, True)
+# Merge with the stock info
+df_reit = dat_reit[['ticker','name2','tt']].rename(columns={'name2':'name'}).merge(df_reit.drop(columns=['year','month']))
+
+
+########################
+### --- (7) SAVE --- ###
 
 di_storage = {'teranet': df_tera, 'tera_w':mm_cities, 'crea':df_crea, 
-              'cpi_tsx':df_cpi_tsx, 'lf':df_lf, 'mort':df_mort_tera}
+              'cpi_tsx':df_cpi_tsx, 'lf':df_lf, 'mort':df_mort_tera,
+              'reit':df_reit}
 with open('data_for_plots.pickle', 'wb') as handle:
     pickle.dump(di_storage, handle, protocol=pickle.HIGHEST_PROTOCOL)

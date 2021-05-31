@@ -1,12 +1,13 @@
 import numpy as np
 import pandas as pd
 import os
+from pandas.core.tools.datetimes import to_datetime
 from plotnine import *
 from mizani.formatters import percent_format
 import pickle
 
 from plotnine.labels import ggtitle
-from support_funs import makeifnot, gg_save, ym2date, gg_color_hue
+from support_funs import add_date_int, makeifnot, gg_save, ym2date, gg_color_hue
 
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
@@ -21,13 +22,11 @@ df_crea = di_storage['crea']
 df_cpi_tsx = di_storage['cpi_tsx']
 df_lf = di_storage['lf']
 df_mort_tera = di_storage['mort']
+df_reit = di_storage['reit']
 
 assert np.issubdtype(df_cpi_tsx.date,np.datetime64)
 
-###################
-# -- (3) REITS -- #
-
-
+dstart = df_tera.date.min().strftime('%Y-%m-%d')
 
 ############################
 # -- (1) TERANET + CREA -- #
@@ -161,6 +160,111 @@ gg_mort_tera =(ggplot(df_mort_tera,aes(x='date',y='value',color='tt')) +
 gg_save('gg_mort_tera.png',dir_figures,gg_mort_tera,9,4)
 
 
+
+###################
+# -- (3) REITS -- #
+
+dat_reit = df_reit.groupby(['ticker','name','tt']).size().reset_index().drop(columns=[0])
+dat_reit = dat_reit.assign(tt=lambda x: np.where(x.tt.isin(['Diversified','Residential']),x.tt,'Commerical'))
+dat_reit.tt.value_counts()
+
+# Annualized dividend rate
+dividend = add_date_int(df_reit).groupby(['ticker','year']).apply(lambda x: 
+  pd.Series({'price':x.price.mean(),'dividend':x.dividend.sum(),'n':len(x)}))
+dividend = dividend.reset_index().assign(dividend=lambda x: x.dividend*(12/x.n))
+dividend = dividend.assign(pct=lambda x: x.dividend/x.price)
+# Group into quartiles of average rate
+tmp_qq = dividend.groupby('ticker').pct.mean().sort_values()
+qq_seq = ['q4','q3','q2','q1']
+di_qq = dict(zip(qq_seq,['Q4','Q3','Q2','Q1']))
+tmp_qq = pd.qcut(tmp_qq,4,labels=qq_seq).reset_index().rename(columns={'pct':'q4'})
+tmp_qq.q4 = pd.Categorical(tmp_qq.q4,np.sort(qq_seq))
+dividend = dividend.merge(tmp_qq).merge(dat_reit)
+
+# (i) Monthly dividend rate by stock
+gg_arate_dividend = (ggplot(dividend,aes(x='year',y='pct',group='ticker',color='tt')) + 
+    theme_bw() + geom_line() + geom_point(size=0.5) + 
+    scale_y_continuous(limits=[0,0.2],labels=percent_format()) + 
+    labs(y='Annual dividend rate') + 
+    ggtitle('sum(dividends)/average(open price)\nDividends extrapolated for incomplete years') + 
+    facet_wrap('~q4',labeller=labeller(q4=di_qq)))
+gg_save('gg_arate_dividend.png',dir_figures,gg_arate_dividend,8,6)
+
+# (ii) Prospective vs retrospective dividend performance
+cn_core = ['ticker','date','price','dividend']
+perf_div = df_reit[cn_core].copy()#.query('ticker=="AP-UN.TO" | ticker == "BPY-UN.TO"')
+l_seq = np.arange(-12,12+1)
+l_seq = pd.Series(np.setdiff1d(l_seq,0))
+tmp = pd.concat([perf_div.groupby('ticker').dividend.shift(l) for l in l_seq],1)
+tmp.columns = l_seq #pd.Series(np.where(l_seq<0,'lead','lag')) + '_' + l_seq.abs().astype(str)
+perf_div = pd.concat([perf_div,tmp],1)
+pref_div = perf_div[perf_div[l_seq[l_seq>0]].notnull().all(1)]
+perf_div = perf_div.melt(cn_core,None,'ll').assign(ll=lambda x: x.ll.astype(int))
+perf_div = perf_div.sort_values(['ticker','date','ll']).reset_index(None,True)
+perf_div = perf_div.assign(offset=lambda x: np.where(x.ll < 0, 'lead', 'lag'))
+# Technically dropping the dividend of that contemporaneous month
+perf_div = perf_div.drop(columns='dividend').rename(columns={'value':'dividend'})
+perf_div = perf_div.groupby(['ticker','date','price','offset']).apply(lambda x: 
+    pd.Series({'dividend':x.dividend.mean(), 'n':x.dividend.notnull().sum()}))
+perf_div = perf_div.reset_index().assign(n=lambda x: x.n.astype(int))
+perf_div = perf_div.assign(dividend=lambda x: x.dividend*12).query('n>0')
+# Compare
+perf_div = perf_div.assign(arate=lambda x: x.dividend/x.price)
+offset_dmax = perf_div.query('offset=="lead" & n == 12').date.max()
+ord_ticker = perf_div.groupby('ticker').arate.mean().sort_values(ascending=False).index.values
+perf_div.ticker = pd.Categorical(perf_div.ticker,ord_ticker)
+# perf_div = perf_div.merge(dat_reit,'left','ticker')
+
+gg_perf_div = (ggplot(perf_div,aes(x='date',y='arate',color='offset')) + 
+    theme_bw() + geom_point(size=0.5) + geom_line() + 
+    facet_wrap('~ticker',nrow=4,scales='free') + 
+    scale_y_continuous(labels=percent_format()) + 
+    labs(y='Yearly rate of return',x='Date') + 
+    geom_vline(xintercept=offset_dmax) + 
+    ggtitle('Vertical line show extrapolation point') + 
+    scale_color_discrete(name='Perspective',labels=['Retrospective','Prospective']) + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
+    theme(axis_text=element_blank(),axis_ticks=element_blank(),
+          subplots_adjust={'hspace': 0.15,'wspace': 0.05}))
+gg_save('gg_perf_div.png',dir_figures,gg_perf_div,20,8)
+
+# Difference
+err_div = perf_div.pivot_table('arate',['ticker','date'],'offset').reset_index().dropna()
+err_div = err_div.assign(extrap=lambda x: np.where(x.date>offset_dmax,True,False))
+err_div = err_div.merge(dat_reit[['ticker','tt']])
+err_div = err_div.assign(err = lambda x: (x.lead - x.lag).abs())
+err_div_yy = add_date_int(err_div).groupby(['tt','extrap','year']).err.describe()
+# err_div_yy.columns = ['med','lb','ub']
+err_div_yy = err_div_yy[['mean','std']].reset_index()
+
+gg_err_div = (ggplot(err_div_yy.query('extrap==False'),aes(x='year',y='mean',color='tt')) + 
+    theme_bw() + geom_point() + geom_line() + 
+    geom_linerange(aes(ymin='mean-std',ymax='mean+std')) + 
+    labs(y='Percent w/ 1std',x='Date') + 
+    theme(subplots_adjust={'wspace':0.1}) + 
+    facet_wrap('~tt') + 
+    scale_y_continuous(labels=percent_format()) + 
+    ggtitle('Average absolute error prospective vs retrospective'))
+gg_save('gg_err_div.png',dir_figures,gg_err_div,10,3)
+
+# Find the most consistent
+best_err = err_div.groupby(['ticker','extrap']).err.max().reset_index().query('extrap==False')
+best_err = best_err.sort_values('err').merge(dat_reit)
+ethresh = 0.03
+ticker_best_err = best_err.query('err < @ethresh').ticker.to_list()
+tmp = perf_div[perf_div.ticker.isin(ticker_best_err)]
+
+gg_best_err = (ggplot(tmp,aes(x='date',y='arate',color='offset')) + 
+    theme_bw() + geom_point(size=0.5) + geom_line() + 
+    facet_wrap('~ticker',nrow=2) + 
+    scale_y_continuous(labels=percent_format()) + 
+    labs(y='Yearly rate of return',x='Date') + 
+    geom_vline(xintercept=offset_dmax) + 
+    ggtitle('Vertical line show extrapolation point') + 
+    scale_color_discrete(name='Perspective',labels=['Retrospective','Prospective']) + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
+    theme(subplots_adjust={'hspace': 0.15,'wspace': 0.05}))
+gg_save('gg_best_err.png',dir_figures,gg_best_err,10,6)
 
 
 

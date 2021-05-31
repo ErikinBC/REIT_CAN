@@ -17,7 +17,7 @@ from colorspace.colorlib import HCL
 # pip install yahoofinancials
 from yahoofinancials import YahooFinancials
 # from yahoofinance import BalanceSheet
-# import yfinance as yf
+import yfinance as yf
 
 
 def gg_color_hue(n):
@@ -63,14 +63,40 @@ def idx_first(df,cn_gg, cn_idx, cn_val):
   df = df.drop(columns=cn_val).rename(columns={'val_idx':cn_val})
   return df
 
+
+# ticker, d1, d2 = 'BTB-UN.TO', dstart, dnow
+def get_price_dividend(ticker, d1, d2):
+  # (i) YahooFinancials to get price data
+  cn_price = ['formatted_date','open']
+  di_price = dict(zip(cn_price,['date','price']))
+  stock = YahooFinancials(ticker)
+  price = stock.get_historical_price_data(d1, d2, 'daily')[ticker]
+  price = pd.DataFrame(price['prices'])[cn_price]
+  price = price.rename(columns=di_price).assign(ticker=ticker)
+  price.date = pd.to_datetime(price.date)
+  # (ii) yfinance to get dividends
+  stock = yf.Ticker(ticker)
+  cn_dividend = ['Date','Dividends','Stock Splits']
+  di_dividend = dict(zip(cn_dividend,['date','dividend','splits']))
+  dividend = stock.history(interval='1d',start=d1, end=d2)
+  dividend = dividend.reset_index()[cn_dividend].rename(columns=di_dividend)
+  # Merge and get monthly values
+  cn_gg = ['ticker','year','month']
+  df = price.merge(dividend,'left','date')
+  df = add_date_int(df).groupby(cn_gg).apply(lambda x: 
+    pd.Series({'price':x.price.mean(),'dividend':x.dividend.sum()})).reset_index()
+  df = ym2date(df)[['date']+cn_gg+['price','dividend']]
+  return df
+
+
 # ---- Get the stock price history --- #
-# ticker, d1, d2, dividend, balance = 'NWH-UN.TO', '2020-01-01', '2021-06-01', True, True
-def get_YahooFinancials(ticker, d1, d2, dividend=True, balance=True):
+# ticker, d1, d2, dividend = 'TNT-UN.TO', '2020-06-01', '2020-08-01', True
+def get_YahooFinancials(ticker, d1, d2, dividend=True):
   di = {'formatted_date':'date','open':'price','amount':'dividend'}
   # (1) Get price data
   cn_price = ['formatted_date','open']
   stock = YahooFinancials(ticker)
-  price = stock.get_historical_price_data(d1, d2, 'monthly')[ticker]
+  price = stock.get_historical_price_data(d1, d2, 'daily')[ticker]
   price = pd.DataFrame(price['prices'])[cn_price]
   price = price.rename(columns=di).assign(ticker=ticker)
   price.date = pd.to_datetime(price.date)
@@ -91,9 +117,19 @@ def get_YahooFinancials(ticker, d1, d2, dividend=True, balance=True):
   return price
 
 # COMPARE YAHOOFINANCIALS TO YFINANCE
-# ticker = 'PRV-UN.TO'
-def get_yfinance():
-  1
+# ticker, d1, d2 = 'TNT-UN.TO', '2020-01-01', '2021-06-01'
+def get_yfinance(ticker, d1, d2):
+  stock = yf.Ticker(ticker)
+  cn = ['Date','Open','Dividends','Stock Splits']
+  di = dict(zip(cn,['date','price','dividend','splits']))
+  # Both price and dividend
+  df = stock.history(interval='1d',start=d1, end=d2)
+  df = df.reset_index()[cn].rename(columns=di)
+  assert df.splits.max() == 0
+  df = add_date_int(df).groupby(['year','month']).apply(lambda x: 
+    pd.Series({'price':x.price.mean(),'dividend':x.dividend.sum()})).reset_index()
+  df = ym2date(df).assign(ticker=ticker)
+  return df
 
 
 
