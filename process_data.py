@@ -7,12 +7,13 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+import pandas_datareader as pdr
 from stats_can import StatsCan
 sc = StatsCan()
 import pickle
 
 #get_YahooFinancials, get_yfinance
-from support_funs import add_date_int, get_price_dividend, idx_first, rm_if_exists
+from funs_support import add_date_int, get_price_dividend, idx_first, rm_if_exists
 
 dir_base = os.getcwd()
 
@@ -237,11 +238,41 @@ df_reit = pd.concat(holder).reset_index(None, True)
 df_reit = dat_reit[['ticker','name2','tt']].rename(columns={'name2':'name'}).merge(df_reit.drop(columns=['year','month']))
 
 
+################################
+### --- (7) OTHER STOCKS --- ###
+
+# Load the case-shiller price data
+ticker_cs = 'SPCS20RSA'
+df_cs = pdr.fred.FredReader(symbols=ticker_cs,start='2000-01-01').read()
+df_cs = df_cs.reset_index().rename(columns={'DATE':'date',ticker_cs:'shiller'})
+
+# Load in mortgage rates
+df_rates = pd.read_csv('irates.csv')
+df_rates.date = pd.to_datetime(df_rates.date)
+
+# merge
+df_shiller_mrate = df_cs.merge(df_rates,'left')
+
+# Get stock list
+dat_other = pd.read_csv('stock_list.csv')
+
+# (ii) Load data
+holder = []
+for ii, rr in dat_other.iterrows():
+  name, ticker = rr['name'], rr['ticker']
+  print('Stock: %s (%i of %i)' % (ticker, ii+1, dat_other.shape[0]))
+  # (i) monthly price & dividends
+  tmp_df = get_price_dividend(ticker, dstart, dnow)
+  holder.append(tmp_df)
+# Merge
+df_other = pd.concat(holder).reset_index(None,True)
+df_other = dat_other.drop(columns='full').merge(df_other,'right')
+
 ########################
-### --- (7) SAVE --- ###
+### --- (8) SAVE --- ###
 
 di_storage = {'teranet': df_tera, 'tera_w':mm_cities, 'crea':df_crea, 
               'cpi_tsx':df_cpi_tsx, 'lf':df_lf, 'mort':df_mort_tera,
-              'reit':df_reit}
+              'reit':df_reit, 'shiller':df_shiller_mrate, 'other':df_other}
 with open('data_for_plots.pickle', 'wb') as handle:
     pickle.dump(di_storage, handle, protocol=pickle.HIGHEST_PROTOCOL)
