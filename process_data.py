@@ -224,19 +224,25 @@ smatch = 'REIT|Properties|Residences|Property|Trust|Industrial|Commercial|North 
 dat_reit['name2'] = dat_reit.name.str.replace(smatch,'',regex=True).str.strip().replace('\\s{2,}',' ',regex=True)
 n_reit = dat_reit.shape[0]
 print('Number of reits: %i' % n_reit)
+# For merging
+dat_reit2 = dat_reit[['ticker','name2','tt']].rename(columns={'name2':'name'})
 
 # (ii) Load data
-holder = []
+holder, holder_daily = [], []
 for ii, rr in dat_reit.iterrows():
   name, ticker, tt = rr['name'], rr['ticker'], rr['tt']
   print('Stock: %s (%i of %i)' % (ticker, ii+1, n_reit))
   # (i) monthly price & dividends
   tmp_df = get_price_dividend(ticker, dstart, dnow)
   holder.append(tmp_df)
+  # (ii) Get daily price data
+  tmp_df_daily = get_price_dividend(ticker, dstart, dnow, ret_daily=True)
+  holder_daily.append(tmp_df_daily)
+# Monthly data - merge with the stock info
 df_reit = pd.concat(holder).reset_index(None, True)
-# Merge with the stock info
-df_reit = dat_reit[['ticker','name2','tt']].rename(columns={'name2':'name'}).merge(df_reit.drop(columns=['year','month']))
-
+df_reit = dat_reit2.merge(df_reit.drop(columns=['year','month']))
+# Daily data
+df_reit_daily = pd.concat(holder_daily).reset_index(None, True)
 
 ################################
 ### --- (7) OTHER STOCKS --- ###
@@ -257,22 +263,31 @@ df_shiller_mrate = df_cs.merge(df_rates,'left')
 dat_other = pd.read_csv('stock_list.csv')
 
 # (ii) Load data
-holder = []
+holder, holder_daily = [], []
 for ii, rr in dat_other.iterrows():
   name, ticker = rr['name'], rr['ticker']
   print('Stock: %s (%i of %i)' % (ticker, ii+1, dat_other.shape[0]))
   # (i) monthly price & dividends
   tmp_df = get_price_dividend(ticker, dstart, dnow)
   holder.append(tmp_df)
+  # (ii) daily price
+  tmp_df_daily = get_price_dividend(ticker, dstart, dnow, ret_daily=True)
+  holder_daily.append(tmp_df_daily)
+
 # Merge
 df_other = pd.concat(holder).reset_index(None,True)
 df_other = dat_other.drop(columns='full').merge(df_other,'right')
+# Daily
+df_other_daily = pd.concat(holder_daily).reset_index(None,True)
+
 
 ########################
 ### --- (8) SAVE --- ###
 
 di_storage = {'teranet': df_tera, 'tera_w':mm_cities, 'crea':df_crea, 
               'cpi_tsx':df_cpi_tsx, 'lf':df_lf, 'mort':df_mort_tera,
-              'reit':df_reit, 'shiller':df_shiller_mrate, 'other':df_other}
+              'reit':df_reit, 'reit_daily':df_reit_daily,
+              'shiller':df_shiller_mrate,
+              'other':df_other, 'other_daily':df_other_daily}
 with open('data_for_plots.pickle', 'wb') as handle:
     pickle.dump(di_storage, handle, protocol=pickle.HIGHEST_PROTOCOL)

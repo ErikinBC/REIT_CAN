@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import os
 from time import time
-from plotnine import *labels, 
 from mizani.formatters import percent_format
 import pickle
 

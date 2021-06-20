@@ -65,7 +65,7 @@ def idx_first(df,cn_gg, cn_idx, cn_val):
 
 
 # ticker, d1, d2 = 'BTB-UN.TO', dstart, dnow
-def get_price_dividend(ticker, d1, d2):
+def get_price_dividend(ticker, d1, d2, ret_daily=False):
   # (i) YahooFinancials to get price data
   cn_price = ['formatted_date','open']
   di_price = dict(zip(cn_price,['date','price']))
@@ -82,7 +82,9 @@ def get_price_dividend(ticker, d1, d2):
   dividend = dividend.reset_index()[cn_dividend].rename(columns=di_dividend)
   # Merge and get monthly values
   cn_gg = ['ticker','year','month']
-  df = price.merge(dividend,'left','date')
+  df = price.merge(dividend,'left','date').drop(columns='splits')
+  if ret_daily:
+     return df
   df = add_date_int(df).groupby(cn_gg).apply(lambda x: 
     pd.Series({'price':x.price.mean(),'dividend':x.dividend.sum()})).reset_index()
   df = ym2date(df)[['date']+cn_gg+['price','dividend']]
