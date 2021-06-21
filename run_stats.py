@@ -4,11 +4,11 @@ import pickle
 import pandas as pd
 import numpy as np
 from plotnine import *
+from plotnine.labels import ggtitle
 from scipy.stats import norm
-from statsmodels.stats.proportion import proportion_confint as prop_CI
-
-from funs_support import ym2date, gg_save
-
+import holidays
+from funs_stats import get_delta, quadrant_pr, get_CI
+from funs_support import ym2date, gg_save, idx_first
 
 # Load the data
 dir_base = os.getcwd()
@@ -36,35 +36,10 @@ cn_gg = ['hpi','city','tt']
 di_hpi = {'crea':'CREA', 'tera':'Teranet'}
 di_tt = {'aggregate':'Aggregate', 'apt':'Apartment', 'row':'Townhouse', 'sfd':'Detached'}
 
-
-# Get the period change
-def get_delta(df, cn, gg, k=1):
-    return df.assign(mm=lambda x: x[cn]/x.groupby(gg)[cn].shift(k)-1)
-
-def quadrant_pr(df, cn_y, cn_x):
-    df = df.copy()
-    cn = [cn_y, cn_x]
-    df[cn] = df[cn].apply(lambda x: np.sign(x).astype(int), 0)
-    res = df.groupby(cn).size().reset_index().rename(columns={0:'n'})
-    # TPR/TNR
-    ntp = res[(res[cn_y] == 1) & (res[cn_x] == 1)].n.sum()
-    nump = res[res[cn_y] == 1].n.sum()
-    ntn = res[(res[cn_y] == -1) & (res[cn_x] == -1)].n.sum()
-    nn = res[res[cn_y] == -1].n.sum()
-    tpr, tnr = ntp/nump, ntn/nn
-    # PPV/NPV
-    npp = res[res[cn_x] == 1].n.sum()
-    npn = res[res[cn_x] == -1].n.sum()
-    ppv = ntp / npp
-    npv = ntn / npn
-    res = pd.DataFrame({'metric':['tpr','tnr','ppv','npv'],
-                  'value':[tpr, tnr, ppv, npv], 'n':[nump, nn, npp, npn]})
-    return res
-
-# For a dataframe with the percentage and n
-def get_CI(df, cn_p, cn_n, method='beta'):
-    return df.assign(lb=lambda x: prop_CI(x[cn_p]*x[cn_n],x[cn_n],method=method)[0],
-                    ub=lambda x: prop_CI(x[cn_p]*x[cn_n],x[cn_n],method=method)[1])
+# Common variables
+dmin = '2010-01-01'
+dfmt = '%Y-%m-%d'
+idx = pd.IndexSlice
 
 ##########################################
 # --- (1) APPLY SEASONAL ADJUSTMENTS --- #
@@ -103,8 +78,6 @@ gg_save('gg_hpi_sidx.png', dir_figures, gg_hpi_sidx, 8, 8)
 ###########################################
 # --- (2) QUADRANT STRATEGY (MONTHLY) --- #
 
-dmin = '2010-01-01'
-
 # (i) Calculate for stock
 mm_stock = pd.concat([df_other[cn_ticker],df_reit[cn_ticker]])
 mm_stock = get_delta(mm_stock,'price','ticker', 1).dropna()
@@ -113,8 +86,8 @@ mm_stock = mm_stock.drop(columns=['mm','price'])#.rename(columns={'price':'idx'}
 ticker12 = mm_stock[mm_stock.date>=dmin].ticker.value_counts().reset_index().query('ticker>=12')['index']
 mm_stock = mm_stock[mm_stock.ticker.isin(ticker12)].reset_index(None, True)
 # (ii) Get "any" negative change CREA/Teranet/Housing type
-mm_hpi = df_hpi.drop(columns=['year','idx']).pivot_table('sidx',['date','city'],['tt','hpi'])
-mm_hpi = (mm_hpi==-1).any(1).replace(True,-1).replace(False,1).reset_index().rename(columns={0:'sidx'})
+mm_hpi_s = df_hpi.drop(columns=['year','idx']).pivot_table('sidx',['date','city'],['tt','hpi'])
+mm_hpi = (mm_hpi_s==-1).any(1).replace(True,-1).replace(False,1).reset_index().rename(columns={0:'sidx'})
 mm_hpi = mm_hpi.merge(mm_stock,'inner','date',suffixes=('_hpi','_stock')) #.drop(columns=['year','idx'])
 mm_hpi = mm_hpi.sort_values(['city','ticker','date'])
 # Subset to 2010 onwards with n>12 and key cities
@@ -168,13 +141,96 @@ di_ticker.query('ticker2.isin(@cn_best)',engine='python')
 #########################################
 # --- (3) SHORTING STRATEGY (DAILY) --- #
 
-# When has the CREA/Teranet gone negative?
-mm_hpi.assign(ss=lambda x: np.sign(x.value).astype(int)).groupby(['city','tt','ss']).size()
+can_holidays = holidays.CAN()
+on_holidays = holidays.CountryHoliday('CAN', prov='ON')
+
+# --- (i) release dates --- #
+# Load the release dates
+release = pd.read_csv('release_date.csv')
+release = pd.to_datetime(release.date)
+dat_release = pd.DataFrame({'date':release,'num':release.dt.day, 'day':release.dt.day_name()})
+dat_release.sort_values(['num','day']).reset_index(None,True)
+# (i) if 15th is a weekday, then it's released on that day
+# (ii) if the 15th is a Saturday, then it's released on the Friday (14th) or the Monday (17th)
+# (iii) if the 15th is a Sunday, then it's released on the Monday
+
+dseq = pd.date_range(dmin, df_hpi.date.max()+pd.DateOffset(months=1), freq='1M')
+dseq = pd.to_datetime(pd.Series(dseq.strftime('%Y-%m')+'-15'))
+df_dseq = pd.DataFrame({'date':dseq, 'day':dseq.dt.day_name()})
+df_dseq = df_dseq.assign(date2=lambda x: np.where(x.day=='Saturday',x.date+pd.DateOffset(days=2),
+    np.where(x.day == 'Sunday',x.date+pd.DateOffset(days=1), x.date) ))
+# Check for holidays
+tmp1 = pd.Series([can_holidays.get(d.strftime(dfmt)) for d in df_dseq.date2])
+tmp2 = pd.Series([on_holidays.get(d.strftime(dfmt)) for d in df_dseq.date2])
+assert np.all(tmp1.isnull() == tmp2.isnull())
+df_dseq = df_dseq.assign(date3=lambda x: np.where(tmp1.notnull(),
+    np.where(x.date2.dt.day==17, x.date2-pd.DateOffset(days=3), x.date2+pd.DateOffset(days=1)),
+    x.date2))
+df_dseq = df_dseq.rename(columns={'date3':'release'}).assign(day=lambda x: x.date2.dt.day_name(), num=lambda x: x.date2.dt.day)
+df_dseq.drop(columns=['date','date2'], inplace=True)
+df_dseq = df_dseq.assign(date=lambda x: pd.to_datetime(x.release.dt.strftime('%Y-%m')+'-01'))
+
+# --- (ii) # of negative indicators --- #
+hpi_sign = mm_hpi_s.where(mm_hpi_s==-1, 0).abs()
+hpi_sign = hpi_sign.iloc[hpi_sign.index.sortlevel('city')[1]]
+hpi_sign = hpi_sign[hpi_sign.index.get_level_values('date') >= dmin]
+hpi_sign = hpi_sign[hpi_sign.index.get_level_values('city').isin(cities)]
+hpi_sign = hpi_sign.sum(1).reset_index().rename(columns={0:'nneg'})
+hpi_sign = hpi_sign.merge(df_dseq[['release','date']],'left','date')
+
+# Merge the stock data
+stock_daily = pd.concat([df_reit_daily, df_other_daily]).reset_index(None, True)
+
+holder = []
+for city in cities:
+    print('--- city: %s ---' % (city))
+    nneg_dates = hpi_sign.query('city == @city & nneg >= 1').release.reset_index(None, True)
+    for date in nneg_dates:
+        # print('date: %s' % date)
+        date_max = date + pd.DateOffset(months=1)
+        tmp_df = stock_daily.query('date >= @date & date < @date_max').reset_index(None, True)
+        tmp_price = tmp_df.groupby('ticker').apply(lambda x: x.head(1).price).reset_index().drop(columns='level_1')
+        tmp_price = tmp_price.assign(qty=lambda x: 100/x.price).drop(columns='price')
+        tmp_df = idx_first(tmp_df, 'ticker', 'date', 'price').assign(short=lambda x: 100-x.price)
+        tmp_df = tmp_df.drop(columns='price').merge(tmp_price)
+        tmp_df = tmp_df.assign(profit=lambda x: x.short - x.dividend*x.qty).drop(columns=['qty','dividend'])
+        tmp_df = tmp_df.assign(ndays=lambda x: (x.date - date).dt.days, date=date, city=city)
+        holder.append(tmp_df)
+
+# --- (iii) Analyze shorting performance --- #
+res_short = pd.concat(holder).reset_index(None, True)
+cn_short = ['city','ticker','ndays']
+res_short_lbub = res_short.groupby(cn_short).profit.apply(lambda x: 
+    pd.Series({'mi':x.min(), 'mx':x.max(), 'mu':x.mean()})).reset_index()
+res_short_lbub = res_short_lbub.pivot_table('profit',cn_short,'level_'+str(len(cn_short))).reset_index()
+res_short_lbub = res_short_lbub.assign(city=lambda x: pd.Categorical(x.city, cities))
+# res_short_lbub['is_reit'] = res_short_lbub.ticker.isin(df_reit.ticker.unique())
+
+# Plot it
+for city in cities:
+    print('--- city: %s ---' % (city))
+    tmp_fn = 'gg_short_' + city + '.png'
+    tmp_gtit = city + ' - $100 short sale (dots show mean)'
+    tmp_df = res_short_lbub.query('city == @city')
+    order_ticker = list(tmp_df.groupby('ticker').mu.mean().sort_values(ascending=False).index)
+    tmp_df = tmp_df.assign(ticker = lambda x: pd.Categorical(x.ticker, order_ticker))
+    gg_tmp = (ggplot(tmp_df, aes(x='ndays',y='mu',color='city',fill='city')) + 
+        theme_bw() + geom_line() + geom_point() + 
+        guides(color=False, fill=False) + ggtitle(tmp_gtit) + 
+        facet_wrap('~ticker',scales='free_y') + 
+        geom_ribbon(aes(ymin='mi',ymax='mx'),alpha=0.05) + 
+        geom_hline(yintercept=0,linetype='--') + 
+        theme(subplots_adjust={'wspace': 0.25}) + 
+        labs(y='Profit/Loss',x='# of days since short'))
+    gg_save(tmp_fn, dir_figures, gg_tmp, 16, 10)
+
+#####################################
+# --- (4) RANKING WITH ANALYSIS --- #
+
+# Mean of mean's?
+# Max vs min?
+# Combinations?
 
 
-
-# SHORTING STRATEGY: SHORT STOCK WHEN THE CREA-HPI BECOMES AVAILABLE AND GOES NEGATIVE
-# DISTRIBUTION OF LOSSES AS A FUNCTION OF HOW LONG TO HOLD ONTO UNTIL FIRST POSITIVE TURN?
-#   MAY NEED TO LOAD DAILY DATA AND ESTIMATE CREA RELEASE DAY
 
 

@@ -45,6 +45,8 @@ def ym2date(x):
   return x.assign(date = lambda w: pd.to_datetime(w.year.astype(str)+'-'+w.month.astype(str)))
 
 
+
+
 # ---- Index come column of df (cn_val) to smallest point (cn_idx) --- #
 def idx_first(df,cn_gg, cn_idx, cn_val):
   # cn_gg=['city']; cn_idx='date'; cn_val='idx'

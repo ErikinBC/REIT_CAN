@@ -1,6 +1,38 @@
 # Load libraries
 import numpy as np
 import pandas as pd
+from statsmodels.stats.proportion import proportion_confint as prop_CI
+
+
+# Get the period change
+def get_delta(df, cn, gg, k=1):
+    return df.assign(mm=lambda x: x[cn]/x.groupby(gg)[cn].shift(k)-1)
+
+def quadrant_pr(df, cn_y, cn_x):
+    df = df.copy()
+    cn = [cn_y, cn_x]
+    df[cn] = df[cn].apply(lambda x: np.sign(x).astype(int), 0)
+    res = df.groupby(cn).size().reset_index().rename(columns={0:'n'})
+    # TPR/TNR
+    ntp = res[(res[cn_y] == 1) & (res[cn_x] == 1)].n.sum()
+    nump = res[res[cn_y] == 1].n.sum()
+    ntn = res[(res[cn_y] == -1) & (res[cn_x] == -1)].n.sum()
+    nn = res[res[cn_y] == -1].n.sum()
+    tpr, tnr = ntp/nump, ntn/nn
+    # PPV/NPV
+    npp = res[res[cn_x] == 1].n.sum()
+    npn = res[res[cn_x] == -1].n.sum()
+    ppv = ntp / npp
+    npv = ntn / npn
+    res = pd.DataFrame({'metric':['tpr','tnr','ppv','npv'],
+                  'value':[tpr, tnr, ppv, npv], 'n':[nump, nn, npp, npn]})
+    return res
+
+# For a dataframe with the percentage and n
+def get_CI(df, cn_p, cn_n, method='beta'):
+    return df.assign(lb=lambda x: prop_CI(x[cn_p]*x[cn_n],x[cn_n],method=method)[0],
+                    ub=lambda x: prop_CI(x[cn_p]*x[cn_n],x[cn_n],method=method)[1])
+
 
 def boot_vec(x,boot):
     if boot:
