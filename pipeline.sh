@@ -9,7 +9,7 @@ python process_data.py
 # output: date_for_plots.pickle
 
 echo "Script 3: Statistical associations"
-#python run_stats.py
+python run_stats.py
 # output: 
 
 echo "Script 4: Make figures"

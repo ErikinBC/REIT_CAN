@@ -16,9 +16,7 @@ from colorspace.colorlib import HCL
 
 # pip install yahoofinancials
 from yahoofinancials import YahooFinancials
-# from yahoofinance import BalanceSheet
 import yfinance as yf
-
 
 def gg_color_hue(n):
     hues = np.linspace(15, 375, num=n + 1)[:n]

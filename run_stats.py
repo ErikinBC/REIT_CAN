@@ -7,8 +7,10 @@ from plotnine import *
 from plotnine.labels import ggtitle
 from scipy.stats import norm
 import holidays
+from plydata.cat_tools import *
 from funs_stats import get_delta, quadrant_pr, get_CI
 from funs_support import ym2date, gg_save, idx_first
+from statsmodels.tsa.seasonal import seasonal_decompose
 
 # Load the data
 dir_base = os.getcwd()
@@ -44,8 +46,6 @@ idx = pd.IndexSlice
 ##########################################
 # --- (1) APPLY SEASONAL ADJUSTMENTS --- #
 
-from statsmodels.tsa.seasonal import seasonal_decompose
-
 # Merge CREA and Tera
 df_hpi = pd.concat([df_crea.assign(hpi='crea'),
             df_tera.assign(tt='aggregate')[df_crea.columns].assign(hpi='tera')])
@@ -73,7 +73,6 @@ gg_hpi_sidx = (ggplot(tmp, aes(x='year',y='n',color='tt')) +
     ggtitle('Index adjusted for seasonality') + 
     labs(x='Year',y='# of negative months'))
 gg_save('gg_hpi_sidx.png', dir_figures, gg_hpi_sidx, 8, 8)
-
 
 ###########################################
 # --- (2) QUADRANT STRATEGY (MONTHLY) --- #
@@ -221,16 +220,106 @@ for city in cities:
         geom_ribbon(aes(ymin='mi',ymax='mx'),alpha=0.05) + 
         geom_hline(yintercept=0,linetype='--') + 
         theme(subplots_adjust={'wspace': 0.25}) + 
-        labs(y='Profit/Loss',x='# of days since short'))
+        labs(y='Profit/Loss (on $100)',x='# of days since short'))
     gg_save(tmp_fn, dir_figures, gg_tmp, 16, 10)
 
 #####################################
 # --- (4) RANKING WITH ANALYSIS --- #
 
+
 # Mean of mean's?
 # Max vs min?
-# Combinations?
 
+di_metric = {'mu':'Average shorting profit', 'gain':'Best over worst short','mi':'Worst','mx':'Best'}
+gg_ct = ['city','ticker']
+tmp1 = res_short_lbub.groupby(gg_ct).mu.mean().reset_index()
+tmp2 = res_short_lbub.groupby(gg_ct).apply(lambda x: np.mean(x.mx + x.mi))
+tmp2 = tmp2.reset_index().rename(columns={0:'gain'})
+dat_short_rank = tmp1.merge(tmp2).melt(gg_ct,None,'metric')
+dat_short_rank = dat_short_rank.sort_values(['city','metric','value'],ascending=False).reset_index(None,True)
+# Set the order to Toronto average
+dat_short_rank = dat_short_rank.assign(ridx= lambda x: x.groupby(['city','metric']).cumcount() + 1,
+                      ticker2=lambda x: x.ticker.str.replace('\\-UN|\\.TO','',regex=True))
+# Plot it
+for metric in dat_short_rank.metric.unique():
+    tmp = dat_short_rank.query('metric == @metric')
+    order_ticker = list(tmp.query('city=="Toronto"').ticker2)
+    tmp = tmp.assign(ticker2=lambda x: cat_relevel(x.ticker2, *order_ticker))
+    #position=posd
+    tmp_fn = 'gg_rank_' + metric + '.png'
+    tmp_gg = (ggplot(tmp, aes(y='ticker2',x='ridx',color='city')) + 
+        theme_bw() + geom_point() + 
+        scale_color_discrete(name='City') + 
+        theme(axis_title_y=element_blank(),legend_position='right') + 
+        ggtitle('Ordered by Toronto') + 
+        labs(x='Stock rank (1==best)') + 
+        facet_wrap('~metric',labeller=labeller(metric=di_metric)))
+    gg_save(tmp_fn, dir_figures, tmp_gg, 7, 6)
 
+###########################################
+# --- (5) COMPOSITE SHORTING STRATEGY --- #
 
+# Use the ranks for the average shorting gain
+top_ridx = dat_short_rank.query('metric=="mu" & value>0').reset_index(None, True)
+ridx_inf_sup = top_ridx.groupby('city').ridx.max().min()
+ridx_mx = 10
+gg_sp = ['short','profit']
+holder = []
+for city in cities:
+    print('--- city: %s ---' % (city))
+    nneg_dates = hpi_sign.query('city == @city & nneg >= 1').release.reset_index(None, True)
+    for ridx in range(1, ridx_mx+1):
+        print('ridx: %i' % ridx)
+        ticker_ridx = list(top_ridx.query('city==@city & ridx<=@ridx').ticker)
+        for date in nneg_dates:
+            # print('date: %s' % date)
+            date_max = date + pd.DateOffset(months=1)
+            tmp_df = stock_daily.query('date >= @date & date < @date_max & ticker.isin(@ticker_ridx)').reset_index(None, True)
+            if len(tmp_df) == 0:
+                continue
+            tmp_price = tmp_df.groupby('ticker').apply(lambda x: x.head(1).price).reset_index()
+            tmp_price = tmp_price.drop(columns='level_1',errors='ignore').rename(columns={0:'price'})
+            tmp_price = tmp_price.assign(qty=lambda x: 100/x.price).drop(columns='price')
+            tmp_df = idx_first(tmp_df, 'ticker', 'date', 'price').assign(short=lambda x: 100-x.price)
+            tmp_df = tmp_df.drop(columns='price').merge(tmp_price)
+            tmp_df = tmp_df.assign(profit=lambda x: x.short - x.dividend*x.qty).drop(columns=['qty','dividend'])
+            tmp_df = tmp_df.assign(ndays=lambda x: (x.date - date).dt.days)
+            tmp_df = tmp_df.groupby('ndays')[gg_sp].mean().reset_index()
+            tmp_df = tmp_df.assign(date=date, city=city,ridx=ridx)
+            holder.append(tmp_df)
+# Merge
+res_comp = pd.concat(holder)
 
+cn_gg = ['city','ridx','ndays']
+res_comp_lbub = res_comp.groupby(cn_gg).profit.apply(lambda x: 
+    pd.Series({'mi':x.min(), 'mx':x.max(), 'mu':x.mean()})).reset_index()
+res_comp_lbub = res_comp_lbub.pivot_table('profit',cn_gg,'level_'+str(len(cn_gg))).reset_index()
+tmp = res_comp_lbub.query('ridx<=@ridx_inf_sup').rename(columns={'city':'City','ridx':'Number_of_stocks'})
+
+# Last figure showing composite performance
+gg_comp_short = (ggplot(tmp, aes(x='ndays',y='mu',color='City',fill='City')) + 
+    theme_bw() + geom_line() + geom_point() + 
+    guides(color=False, fill=False) + 
+    facet_grid('City~Number_of_stocks',labeller=label_both) + 
+    geom_ribbon(aes(ymin='mi',ymax='mx'),alpha=0.05) + 
+    geom_hline(yintercept=0,linetype='--') + 
+    ggtitle('Equal weighting') + 
+    theme(subplots_adjust={'wspace': 0.10}) + 
+    labs(y='Profit/Loss (on $100)',x='# of days since short'))
+gg_save('gg_comp_short.png', dir_figures, gg_comp_short, 16, 8)
+
+# Which has the highest average?
+res_comp_mu = res_comp_lbub.groupby(['city','ridx'])[['mu','mi','mx']].mean()
+res_comp_mu = res_comp_mu.assign(gain=lambda x: x.mx+x.mi).reset_index()
+res_comp_mu = res_comp_mu.melt(['city','ridx'],None,'metric')
+
+gg_comp_metric = (ggplot(res_comp_mu, aes(x='ridx',y='value',color='city')) + 
+    theme_bw() + geom_line() + geom_point() + 
+    facet_wrap('~metric',scales='free',labeller=labeller(metric=di_metric)) + 
+    theme(subplots_adjust={'wspace': 0.20, 'hspace':0.30}) + 
+    ggtitle('Equal weighting') + 
+    geom_hline(yintercept=0,linetype='--') + 
+    scale_x_continuous(breaks=list(range(1,ridx_mx+1))) + 
+    scale_color_discrete(name='City') + 
+    labs(y='Profit/Loss (on $100)',x='Number of top shorting stocks'))
+gg_save('gg_comp_metric.png', dir_figures, gg_comp_metric, 8, 7)
