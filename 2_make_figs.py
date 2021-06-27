@@ -5,9 +5,8 @@ import os
 from time import time
 from mizani.formatters import percent_format
 import pickle
-
+from plotnine import *
 from statsmodels.stats.proportion import proportion_confint as prop_CI
-
 from funs_support import add_date_int, makeifnot, gg_save, ym2date, gg_color_hue, idx_first
 from funs_stats import make_index
 
@@ -408,7 +407,7 @@ gg_reit_idx = (ggplot(reit_index,aes(x='date',y='budget',color='msr')) +
     geom_text(aes(x='date',y='y',label='label'),data=tmp,color='black') + 
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
     scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m'))
-gg_save('gg_reit_idx.png',dir_figures,gg_reit_idx,7,4.5)
+gg_save('   .png',dir_figures,gg_reit_idx,7,4.5)
 
 # Repeat with bootstraps
 n_bs = 1000
@@ -446,4 +445,3 @@ gg_reit_idx_bs = (ggplot(reit_bs_qq,aes(x='date',y='budget',color='msr')) +
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
     scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m'))
 gg_save('gg_reit_idx_bs.png',dir_figures,gg_reit_idx_bs,13,4.5)
-

@@ -274,7 +274,7 @@ for city in cities:
         for date in nneg_dates:
             # print('date: %s' % date)
             date_max = date + pd.DateOffset(months=1)
-            tmp_df = stock_daily.query('date >= @date & date < @date_max & ticker.isin(@ticker_ridx)').reset_index(None, True)
+            tmp_df = stock_daily.query('date >= @date & date < @date_max & ticker.isin(@ticker_ridx)',engine='python').reset_index(None, True)
             if len(tmp_df) == 0:
                 continue
             tmp_price = tmp_df.groupby('ticker').apply(lambda x: x.head(1).price).reset_index()
