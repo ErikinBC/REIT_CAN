@@ -4,7 +4,7 @@ import pandas as pd
 import os
 from time import time
 from mizani.formatters import percent_format
-import pickle
+import pickle5 as pickle
 from plotnine import *
 from statsmodels.stats.proportion import proportion_confint as prop_CI
 from funs_support import add_date_int, makeifnot, gg_save, ym2date, gg_color_hue, idx_first
@@ -66,7 +66,7 @@ gg_save('gg_shiller_mm.png', dir_figures, gg_shiller_mm, 14, 3.5)
 gg_shiller_idx = (ggplot(shiller_idx,aes(x='date',y='value',color='tt')) + 
     theme_bw() + geom_line() + labs(y='Index') + 
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m') + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
     scale_color_discrete(name='Measure',labels=['Facet','Teranet']) + 
     facet_wrap('~msr',labeller=labeller(msr=di_msr),scales='free_x'))
 gg_save('gg_shiller_idx.png', dir_figures, gg_shiller_idx, 13, 3.75)
@@ -108,10 +108,11 @@ tera_other = tera_other.merge(other_names)
 gg_tera_other = (ggplot(tera_other,aes(x='date',y='value',color='tt')) + 
     theme_bw() + geom_line() + 
     facet_wrap('~name',nrow=2) + 
+    labs(y='Index (100==Initial point)') + 
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m') + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
     scale_color_discrete(name='Measure'))
-gg_save('gg_tera_other.png', dir_figures, gg_tera_other, 16, 7)
+gg_save('gg_tera_other.png', dir_figures, gg_tera_other, 12, 5)
 
 # Calculate monthly
 tera_other_mm = tera_other.assign(mm=lambda x: x.value/x.groupby(['ticker','tt']).value.shift(1)-1).pivot_table('mm',['ticker','name','date'],'tt').reset_index().assign(year=lambda x: x.date.dt.year)
@@ -160,7 +161,7 @@ gg_tera_w = (ggplot(tera_w,aes(x='date',y='idx*100',color='tt')) +
     geom_line() + theme_bw() + 
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
     labs(y='Index (2001M1==100)') + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m') + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
     scale_color_discrete(name='Aggregate',labels=['Canada','Weighted Cities']))
 gg_save('gg_tera_w.png',dir_figures,gg_tera_w,5,4)
 
@@ -175,7 +176,7 @@ gg_tera_crea_lvl = (ggplot(df_hpi_both,aes(x='date',y='value',color='hpi')) +
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
     labs(y='Index (2001M1==100)') + 
     facet_wrap('~city',nrow=2) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m') + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
     scale_color_discrete(name='HPI',labels=['CREA','Teranet']))
 gg_save('gg_tera_crea_lvl.png',dir_figures,gg_tera_crea_lvl,12,5)
 
@@ -233,10 +234,10 @@ lblz = ['Aggregate','Apartment','Townhouse','Single-Family']
 
 gg_crea_tt = (ggplot(df_crea,aes(x='date',y='idx',color='tt')) + 
     geom_line() + theme_bw() + 
-    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
+    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
     labs(y='CREA HPI (2001M1==100)') + 
     facet_wrap('~city',nrow=2) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m') + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
     scale_color_manual(name='Type',values=colz,labels=lblz))
 gg_save('gg_crea_tt.png',dir_figures,gg_crea_tt,12,5)
 
@@ -253,9 +254,9 @@ lblz = ['Teranet','TSX','CPI']
 gg_hpi_vs_stats = (ggplot(df_hpi_vs_stats, aes(x='date',y='value',color='tt')) +
            geom_line() + theme_bw() + 
            labs(y='Index (2001M1==100)') + 
-           theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
+           theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
            scale_color_manual(name='Measure',values=colz,labels=lblz) + 
-           scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m'))
+           scale_x_datetime(date_breaks='5 years',date_labels='%Y'))
 gg_save('gg_hpi_vs_stats.png',dir_figures,gg_hpi_vs_stats,5,4)
 
 
@@ -299,7 +300,7 @@ dividend = dividend.assign(pct=lambda x: x.dividend/x.price)
 # Group into quartiles of average rate
 tmp_qq = dividend.groupby('ticker').pct.mean().sort_values()
 qq_seq = ['q4','q3','q2','q1']
-di_qq = dict(zip(qq_seq,['Q4','Q3','Q2','Q1']))
+di_qq = dict(zip(qq_seq,[q.replace('q','Quartile ') for q in qq_seq]))
 tmp_qq = pd.qcut(tmp_qq,4,labels=qq_seq).reset_index().rename(columns={'pct':'q4'})
 tmp_qq.q4 = pd.Categorical(tmp_qq.q4,np.sort(qq_seq))
 dividend = dividend.merge(tmp_qq).merge(dat_reit)
@@ -406,8 +407,8 @@ gg_reit_idx = (ggplot(reit_index,aes(x='date',y='budget',color='msr')) +
     geom_line(aes(x='date',y='tsx'),color='black',data=df_cpi_tsx) + 
     geom_text(aes(x='date',y='y',label='label'),data=tmp,color='black') + 
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m'))
-gg_save('   .png',dir_figures,gg_reit_idx,7,4.5)
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y'))
+gg_save('gg_reit_idx.png',dir_figures,gg_reit_idx,7,4.5)
 
 # Repeat with bootstraps
 n_bs = 1000
@@ -443,5 +444,5 @@ gg_reit_idx_bs = (ggplot(reit_bs_qq,aes(x='date',y='budget',color='msr')) +
     geom_line(aes(x='date',y='tsx'),color='black',data=df_cpi_tsx) + 
     geom_text(aes(x='date',y='y',label='label'),data=tmp,color='black') + 
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y-%m'))
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y'))
 gg_save('gg_reit_idx_bs.png',dir_figures,gg_reit_idx_bs,13,4.5)

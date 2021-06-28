@@ -1,6 +1,6 @@
 # Load libraries
 import os
-import pickle
+import pickle5 as pickle
 import pandas as pd
 import numpy as np
 from plotnine import *
@@ -11,6 +11,10 @@ from plydata.cat_tools import *
 from funs_stats import get_delta, quadrant_pr, get_CI
 from funs_support import ym2date, gg_save, idx_first
 from statsmodels.tsa.seasonal import seasonal_decompose
+
+# Set up the holidays
+can_holidays = holidays.CAN()
+on_holidays = holidays.CountryHoliday('CAN', prov='ON')
 
 # Load the data
 dir_base = os.getcwd()
@@ -140,9 +144,6 @@ di_ticker.query('ticker2.isin(@cn_best)',engine='python')
 #########################################
 # --- (3) SHORTING STRATEGY (DAILY) --- #
 
-can_holidays = holidays.CAN()
-on_holidays = holidays.CountryHoliday('CAN', prov='ON')
-
 # --- (i) release dates --- #
 # Load the release dates
 release = pd.read_csv('release_date.csv')
@@ -209,7 +210,7 @@ res_short_lbub = res_short_lbub.assign(city=lambda x: pd.Categorical(x.city, cit
 for city in cities:
     print('--- city: %s ---' % (city))
     tmp_fn = 'gg_short_' + city + '.png'
-    tmp_gtit = city + ' - $100 short sale (dots show mean)'
+    tmp_gtit = city + ' - $100 short sale (dots show mean)\nShaded areas shows range of profit/loss'
     tmp_df = res_short_lbub.query('city == @city')
     order_ticker = list(tmp_df.groupby('ticker').mu.mean().sort_values(ascending=False).index)
     tmp_df = tmp_df.assign(ticker = lambda x: pd.Categorical(x.ticker, order_ticker))
@@ -303,7 +304,7 @@ gg_comp_short = (ggplot(tmp, aes(x='ndays',y='mu',color='City',fill='City')) +
     facet_grid('City~Number_of_stocks',labeller=label_both) + 
     geom_ribbon(aes(ymin='mi',ymax='mx'),alpha=0.05) + 
     geom_hline(yintercept=0,linetype='--') + 
-    ggtitle('Equal weighting') + 
+    ggtitle('Equal weighting\nShaded areas shows range of profit/loss') + 
     theme(subplots_adjust={'wspace': 0.10}) + 
     labs(y='Profit/Loss (on $100)',x='# of days since short'))
 gg_save('gg_comp_short.png', dir_figures, gg_comp_short, 16, 8)

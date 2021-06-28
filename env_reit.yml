@@ -111,6 +111,7 @@ dependencies:
   - pip:
     - beautifulsoup4==4.9.3
     - colorspace==0.1.0
+    - pickle5==0.0.11
     - plydata==0.4.3
     - soupsieve==2.2.1
     - yahoofinancials==1.6
