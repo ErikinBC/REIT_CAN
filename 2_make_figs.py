@@ -109,7 +109,7 @@ gg_tera_other = (ggplot(tera_other,aes(x='date',y='value',color='tt')) +
     theme_bw() + geom_line() + 
     facet_wrap('~name',nrow=2) + 
     labs(y='Index (100==Initial point)') + 
-    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
+    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
     scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
     scale_color_discrete(name='Measure'))
 gg_save('gg_tera_other.png', dir_figures, gg_tera_other, 12, 5)
@@ -267,7 +267,7 @@ gg_lf_share = (ggplot(tmp,aes(x='date',weight='share',fill='metro')) +
           scale_y_continuous(limits=[-0.01,1]) + 
           labs(y='Share of annual net change') + 
           scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
-          theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
+          theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
           scale_fill_discrete(name='Metro'))
 gg_save('gg_lf_share.png',dir_figures,gg_lf_share,9,5)
 
@@ -299,7 +299,8 @@ dividend = dividend.reset_index().assign(dividend=lambda x: x.dividend*(12/x.n))
 dividend = dividend.assign(pct=lambda x: x.dividend/x.price)
 # Group into quartiles of average rate
 tmp_qq = dividend.groupby('ticker').pct.mean().sort_values()
-qq_seq = ['q4','q3','q2','q1']
+# qq_seq = ['q4','q3','q2','q1']
+qq_seq = ['q1','q2','q3','q4']
 di_qq = dict(zip(qq_seq,[q.replace('q','Quartile ') for q in qq_seq]))
 tmp_qq = pd.qcut(tmp_qq,4,labels=qq_seq).reset_index().rename(columns={'pct':'q4'})
 tmp_qq.q4 = pd.Categorical(tmp_qq.q4,np.sort(qq_seq))
@@ -310,6 +311,8 @@ gg_arate_dividend = (ggplot(dividend,aes(x='year',y='pct',group='ticker',color='
     theme_bw() + geom_line() + geom_point(size=0.5) + 
     scale_y_continuous(limits=[0,0.2],labels=percent_format()) + 
     labs(y='Annual dividend rate') + 
+    theme(axis_title_x=element_blank()) + 
+    scale_color_discrete(name='Type') + 
     ggtitle('sum(dividends)/average(open price)\nDividends extrapolated for incomplete years') + 
     facet_wrap('~q4',labeller=labeller(q4=di_qq)))
 gg_save('gg_arate_dividend.png',dir_figures,gg_arate_dividend,8,6)
@@ -404,9 +407,10 @@ tmp = pd.DataFrame({'date':pd.to_datetime('2017-01-01'),'y':110,'label':'TSX'},i
 
 gg_reit_idx = (ggplot(reit_index,aes(x='date',y='budget',color='msr')) + 
     theme_bw() + geom_line() + labs(y='Index value') + 
+    scale_color_discrete(name='Index') + 
     geom_line(aes(x='date',y='tsx'),color='black',data=df_cpi_tsx) + 
     geom_text(aes(x='date',y='y',label='label'),data=tmp,color='black') + 
-    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
+    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=0)) + 
     scale_x_datetime(date_breaks='5 years',date_labels='%Y'))
 gg_save('gg_reit_idx.png',dir_figures,gg_reit_idx,7,4.5)
 
