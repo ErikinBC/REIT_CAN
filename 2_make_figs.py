@@ -36,121 +36,31 @@ df_reit = df_reit.assign(tt=lambda x: np.where(x.tt.isin(['Diversified','Residen
 # Subset canada
 tera_cad = df_tera.query('city=="Canada"')[['date','idx']]
 
-###############################
-# -- (5) TERANET + SHILLER -- #
+#########################
+# -- (0) QUICK CALCS -- #
 
-# .drop(columns='variable')
-tmp = df_shiller_mrate.rename(columns={'fixed':'fyf','variable':'fyv'}).melt('date',None,'msr','idx').dropna().reset_index(None,True)
-df_shiller_idx = idx_first(tmp, 'msr', 'date', 'idx')#.pivot('date','variable','value').reset_index()
-df_shiller_idx = df_shiller_idx.assign(mm=lambda x: x.idx/x.groupby('msr').idx.shift(1)-1)
-df_shiller_idx = tera_cad.assign(mm=lambda x: x.idx/x.idx.shift(1)-1).merge(df_shiller_idx,'left','date',suffixes=('_tera','_shiller')).sort_values(['msr','date'])
-df_shiller_idx = df_shiller_idx.melt(['msr','date'],None,'tmp').dropna()
-df_shiller_idx['tt'] = df_shiller_idx.tmp.str.split('\\_',1,True).iloc[:,0]
-df_shiller_idx['tmp2'] = df_shiller_idx.tmp.str.split('\\_',1,True).iloc[:,1]
-df_shiller_idx = df_shiller_idx.drop(columns='tmp').pivot_table('value',['msr','tt','date'],'tmp2').reset_index()
-# Split into mrate and index
-shiller_mm = df_shiller_idx.query('tt != "idx"').dropna().drop(columns='tt').reset_index(None,True).assign(year=lambda x: x.date.dt.year)
-shiller_idx = idx_first(df_shiller_idx.query('tt == "idx"'), 'msr', 'date', 'tera').drop(columns='tt').melt(['date','msr'],None,'tt')
-di_msr = {'fyf':'5-year fixed', 'fyv':'5-year variable', 'shiller':'Case-Shiller 20 city'}
-# Compare
-gg_shiller_mm = (ggplot(shiller_mm,aes(x='shiller',y='tera',color='year')) + 
-    theme_bw() + labs(x='m/m',y='Teranet (m/m)') + 
-    geom_point() + theme(subplots_adjust={'wspace': 0.15}) + 
-    ggtitle('Month-on-month growth rates (%)') + 
-    geom_hline(yintercept=0,linetype='--') + 
-    geom_vline(xintercept=0,linetype='--') + 
-    facet_wrap('~msr',labeller=labeller(msr=di_msr),scales='free'))
-gg_save('gg_shiller_mm.png', dir_figures, gg_shiller_mm, 14, 3.5)
+# Month-on-month correlation
+qq = df_tera.drop(columns=['sales','year','month','tt']).query('city != "Canada"')
+qq = qq.pivot('date','city','idx')
+rho = qq.diff().corr().values
+np.mean(rho[np.tril_indices(len(rho),-1)])
 
-# Compare
-gg_shiller_idx = (ggplot(shiller_idx,aes(x='date',y='value',color='tt')) + 
-    theme_bw() + geom_line() + labs(y='Index') + 
-    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
-    scale_color_discrete(name='Measure',labels=['Facet','Teranet']) + 
-    facet_wrap('~msr',labeller=labeller(msr=di_msr),scales='free_x'))
-gg_save('gg_shiller_idx.png', dir_figures, gg_shiller_idx, 13, 3.75)
-
-
-##########################
-# -- (6) OTHER STOCKS -- #
-
-other_names = df_other.groupby(['name','ticker']).size().reset_index().drop(columns=[0])
-
-price_other = df_other[['ticker','date','year','price','dividend']].copy()
-# Get annual dividend rate
-drate_other = price_other.groupby(['ticker','year']).apply(lambda x: 
-    pd.DataFrame({'n':len(x),'p':x.price.mean(),'d':x.dividend.sum()},index=[0])).reset_index().drop(columns='level_2')
-drate_other = drate_other.assign(rate=lambda x: x.d*(12/x.n)/x.p)
-drate_other = drate_other.assign(cgain=lambda x: x.p/x.groupby('ticker').p.shift(1)-1)
-drate_other = drate_other.melt(['ticker','year'],['rate','cgain'],'tt')
-drate_other = drate_other.dropna().merge(other_names)
-
-lblz = ['$'+str(z+1)+'$' for z in range(len(other_names))]
-di_tt = {'rate':'Dividend Rate','cgain':'Price change'}
-gg_drate_other = (ggplot(drate_other,aes(x='year',y='value',color='name',shape='name')) +
-    scale_shape_manual(name='Stock',values=lblz) + 
-    theme_bw() + geom_point(size=3) + geom_line() + 
-    theme(subplots_adjust={'wspace': 0.2}) + 
-    geom_hline(yintercept=0,linetype='--') + 
-    scale_color_discrete(name='Stock') + 
-    labs(y='Dividend/capital gains rate',x='Date') + 
-    facet_wrap('~tt',labeller=labeller(tt=di_tt),scales='free_y'))
-gg_save('gg_drate_other.png', dir_figures, gg_drate_other, 11, 4)
-
-# Index to Teranet and compare
-tera_other = price_other.drop(columns=['dividend','year']).merge(tera_cad).sort_values(['ticker','date'])
-tera_other = idx_first(tera_other, 'ticker', 'date', 'idx')
-tera_other = idx_first(tera_other, 'ticker', 'date', 'price')
-tera_other = tera_other.rename(columns={'idx':'Teranet','price':'Stock'}).melt(['ticker','date'],None,'tt')
-tera_other = tera_other.merge(other_names)
-
-gg_tera_other = (ggplot(tera_other,aes(x='date',y='value',color='tt')) + 
-    theme_bw() + geom_line() + 
-    facet_wrap('~name',nrow=2) + 
-    labs(y='Index (100==Initial point)') + 
-    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
-    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
-    scale_color_discrete(name='Measure'))
-gg_save('gg_tera_other.png', dir_figures, gg_tera_other, 12, 5)
-
-# Calculate monthly
-tera_other_mm = tera_other.assign(mm=lambda x: x.value/x.groupby(['ticker','tt']).value.shift(1)-1).pivot_table('mm',['ticker','name','date'],'tt').reset_index().assign(year=lambda x: x.date.dt.year)
-
-gg_tera_other_mm = (ggplot(tera_other_mm,aes(x='Stock',y='Teranet',color='year')) + 
-    theme_bw() + geom_point() + 
-    geom_hline(yintercept=0,linetype='--') + 
-    geom_vline(xintercept=0,linetype='--') + 
-    theme(subplots_adjust={'wspace': 0.2,'hspace':0.2}) + 
-    facet_wrap('~name',nrow=2,scales='free'))
-gg_save('gg_tera_other_mm.png', dir_figures, gg_tera_other_mm, 16, 7)
-
-# Quadrant
-tera_other_quad = tera_other_mm.copy().query('year>=2010')
-tera_other_quad[['Stock','Teranet']] = tera_other_quad[['Stock','Teranet']].apply(lambda x: np.where(x>0,1,-1))
-tera_other_quad = tera_other_quad.groupby(['name','Stock','Teranet']).size().reset_index().rename(columns={0:'n'})
-tera_other_quad = tera_other_quad.merge(tera_other_quad.groupby(['name','Teranet']).n.sum().reset_index(),'left',['name','Teranet'],suffixes=('','_tera')).assign(sens_tera=lambda x: x.n/x.n_tera)
-tera_other_quad = tera_other_quad.merge(tera_other_quad.groupby(['name','Stock']).n.sum().reset_index(),'left',['name','Stock'],suffixes=('','_stock')).assign(prec_stock=lambda x: x.n/x.n_stock)
-tera_other_quad = tera_other_quad.query('Stock==Teranet').drop(columns=['Teranet','n']).melt(['name','Stock'],None,'tmp')
-tera_other_quad = pd.concat([tera_other_quad.drop(columns='tmp'),
-    tera_other_quad.tmp.str.split('\\_',1,True).rename(columns={0:'tmp',1:'tt'})],1)
-tera_other_quad = tera_other_quad.pivot_table('value',['name','Stock','tt'],'tmp').reset_index()
-tera_other_quad = tera_other_quad.assign(tt=lambda x: np.where(x.tt=='stock','prec','sens'),
-    value=lambda x: np.where(x.tt=='prec',x.prec,x.sens),
-    n=lambda x: x.n.astype(int)).drop(columns=['prec','sens'])
-tera_other_quad  = tera_other_quad.assign(lb=lambda x: prop_CI(x.value*x.n,x.n,method='beta')[0], ub=lambda x: prop_CI(x.value*x.n,x.n,method='beta')[1])
-
-di_Stock = {'-1':'Negative','1':'Positive'}
+# Seasonal factors by city
+cn_gg = ['city','tt']
+dat_seas = df_crea.assign(mm=lambda x: x.idx/x.groupby(cn_gg).idx.shift(1)-1).dropna()
+dat_seas = dat_seas.assign(month=lambda x: x.date.dt.month).groupby(cn_gg+['month']).mm.describe()
+dat_seas = dat_seas.rename(columns={'25%':'lb', '75%':'ub'}).drop(columns=['min','50%','max','count'])
+dat_seas.reset_index(inplace=True)
 posd = position_dodge(0.5)
-gg_tera_quad = (ggplot(tera_other_quad,aes(x='name',y='value',color='tt')) + 
-    theme_bw() + geom_point(position=posd) + 
-    ggtitle('Since 2010') + 
-    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
+gg_seas = (ggplot(dat_seas,aes(x='month',y='mean',color='tt')) + theme_bw() + 
+    geom_point(position=posd) + 
+    geom_hline(yintercept=0,linetype='--') + 
+    scale_x_continuous(breaks=list(np.arange(1,13))) + 
     geom_linerange(aes(ymin='lb',ymax='ub'),position=posd) + 
-    scale_color_discrete(name='Measure',labels=['Precision','Sensitivty']) + 
-    facet_wrap('~Stock',labeller=labeller(Stock=di_Stock)))
-gg_save('gg_tera_quad.png', dir_figures, gg_tera_quad, 10, 4)
-
+    labs(y='m/m %') + facet_wrap('~city',nrow=2) + 
+    theme(axis_title_x=element_blank(),legend_position='bottom') + 
+    scale_color_discrete(name='Type'))
+gg_save('gg_seas.png',dir_figures,gg_seas, 14, 6)
 
 
 ############################
@@ -450,3 +360,118 @@ gg_reit_idx_bs = (ggplot(reit_bs_qq,aes(x='date',y='budget',color='msr')) +
     theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
     scale_x_datetime(date_breaks='5 years',date_labels='%Y'))
 gg_save('gg_reit_idx_bs.png',dir_figures,gg_reit_idx_bs,13,4.5)
+
+###############################
+# -- (5) TERANET + SHILLER -- #
+
+# .drop(columns='variable')
+tmp = df_shiller_mrate.rename(columns={'fixed':'fyf','variable':'fyv'}).melt('date',None,'msr','idx').dropna().reset_index(None,True)
+df_shiller_idx = idx_first(tmp, 'msr', 'date', 'idx')#.pivot('date','variable','value').reset_index()
+df_shiller_idx = df_shiller_idx.assign(mm=lambda x: x.idx/x.groupby('msr').idx.shift(1)-1)
+df_shiller_idx = tera_cad.assign(mm=lambda x: x.idx/x.idx.shift(1)-1).merge(df_shiller_idx,'left','date',suffixes=('_tera','_shiller')).sort_values(['msr','date'])
+df_shiller_idx = df_shiller_idx.melt(['msr','date'],None,'tmp').dropna()
+df_shiller_idx['tt'] = df_shiller_idx.tmp.str.split('\\_',1,True).iloc[:,0]
+df_shiller_idx['tmp2'] = df_shiller_idx.tmp.str.split('\\_',1,True).iloc[:,1]
+df_shiller_idx = df_shiller_idx.drop(columns='tmp').pivot_table('value',['msr','tt','date'],'tmp2').reset_index()
+# Split into mrate and index
+shiller_mm = df_shiller_idx.query('tt != "idx"').dropna().drop(columns='tt').reset_index(None,True).assign(year=lambda x: x.date.dt.year)
+shiller_idx = idx_first(df_shiller_idx.query('tt == "idx"'), 'msr', 'date', 'tera').drop(columns='tt').melt(['date','msr'],None,'tt')
+di_msr = {'fyf':'5-year fixed', 'fyv':'5-year variable', 'shiller':'Case-Shiller 20 city'}
+# Compare
+gg_shiller_mm = (ggplot(shiller_mm,aes(x='shiller',y='tera',color='year')) + 
+    theme_bw() + labs(x='m/m',y='Teranet (m/m)') + 
+    geom_point() + theme(subplots_adjust={'wspace': 0.15}) + 
+    ggtitle('Month-on-month growth rates (%)') + 
+    geom_hline(yintercept=0,linetype='--') + 
+    geom_vline(xintercept=0,linetype='--') + 
+    facet_wrap('~msr',labeller=labeller(msr=di_msr),scales='free'))
+gg_save('gg_shiller_mm.png', dir_figures, gg_shiller_mm, 14, 3.5)
+
+# Compare
+gg_shiller_idx = (ggplot(shiller_idx,aes(x='date',y='value',color='tt')) + 
+    theme_bw() + geom_line() + labs(y='Index') + 
+    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=45)) + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
+    scale_color_discrete(name='Measure',labels=['Facet','Teranet']) + 
+    facet_wrap('~msr',labeller=labeller(msr=di_msr),scales='free_x'))
+gg_save('gg_shiller_idx.png', dir_figures, gg_shiller_idx, 13, 3.75)
+
+
+##########################
+# -- (6) OTHER STOCKS -- #
+
+other_names = df_other.groupby(['name','ticker']).size().reset_index().drop(columns=[0])
+
+price_other = df_other[['ticker','date','year','price','dividend']].copy()
+# Get annual dividend rate
+drate_other = price_other.groupby(['ticker','year']).apply(lambda x: 
+    pd.DataFrame({'n':len(x),'p':x.price.mean(),'d':x.dividend.sum()},index=[0])).reset_index().drop(columns='level_2')
+drate_other = drate_other.assign(rate=lambda x: x.d*(12/x.n)/x.p)
+drate_other = drate_other.assign(cgain=lambda x: x.p/x.groupby('ticker').p.shift(1)-1)
+drate_other = drate_other.melt(['ticker','year'],['rate','cgain'],'tt')
+drate_other = drate_other.dropna().merge(other_names)
+
+lblz = ['$'+str(z+1)+'$' for z in range(len(other_names))]
+di_tt = {'rate':'Dividend Rate','cgain':'Price change'}
+gg_drate_other = (ggplot(drate_other,aes(x='year',y='value',color='name',shape='name')) +
+    scale_shape_manual(name='Stock',values=lblz) + 
+    theme_bw() + geom_point(size=3) + geom_line() + 
+    theme(subplots_adjust={'wspace': 0.2}) + 
+    geom_hline(yintercept=0,linetype='--') + 
+    scale_color_discrete(name='Stock') + 
+    labs(y='Dividend/capital gains rate',x='Date') + 
+    facet_wrap('~tt',labeller=labeller(tt=di_tt),scales='free_y'))
+gg_save('gg_drate_other.png', dir_figures, gg_drate_other, 11, 4)
+
+# Index to Teranet and compare
+tera_other = price_other.drop(columns=['dividend','year']).merge(tera_cad).sort_values(['ticker','date'])
+tera_other = idx_first(tera_other, 'ticker', 'date', 'idx')
+tera_other = idx_first(tera_other, 'ticker', 'date', 'price')
+tera_other = tera_other.rename(columns={'idx':'Teranet','price':'Stock'}).melt(['ticker','date'],None,'tt')
+tera_other = tera_other.merge(other_names)
+
+gg_tera_other = (ggplot(tera_other,aes(x='date',y='value',color='tt')) + 
+    theme_bw() + geom_line() + 
+    facet_wrap('~name',nrow=2) + 
+    labs(y='Index (100==Initial point)') + 
+    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
+    scale_x_datetime(date_breaks='5 years',date_labels='%Y') + 
+    scale_color_discrete(name='Measure'))
+gg_save('gg_tera_other.png', dir_figures, gg_tera_other, 12, 5)
+
+# Calculate monthly
+tera_other_mm = tera_other.assign(mm=lambda x: x.value/x.groupby(['ticker','tt']).value.shift(1)-1).pivot_table('mm',['ticker','name','date'],'tt').reset_index().assign(year=lambda x: x.date.dt.year)
+
+gg_tera_other_mm = (ggplot(tera_other_mm,aes(x='Stock',y='Teranet',color='year')) + 
+    theme_bw() + geom_point() + 
+    geom_hline(yintercept=0,linetype='--') + 
+    geom_vline(xintercept=0,linetype='--') + 
+    theme(subplots_adjust={'wspace': 0.2,'hspace':0.2}) + 
+    facet_wrap('~name',nrow=2,scales='free'))
+gg_save('gg_tera_other_mm.png', dir_figures, gg_tera_other_mm, 16, 7)
+
+# Quadrant
+tera_other_quad = tera_other_mm.copy().query('year>=2010')
+tera_other_quad[['Stock','Teranet']] = tera_other_quad[['Stock','Teranet']].apply(lambda x: np.where(x>0,1,-1))
+tera_other_quad = tera_other_quad.groupby(['name','Stock','Teranet']).size().reset_index().rename(columns={0:'n'})
+tera_other_quad = tera_other_quad.merge(tera_other_quad.groupby(['name','Teranet']).n.sum().reset_index(),'left',['name','Teranet'],suffixes=('','_tera')).assign(sens_tera=lambda x: x.n/x.n_tera)
+tera_other_quad = tera_other_quad.merge(tera_other_quad.groupby(['name','Stock']).n.sum().reset_index(),'left',['name','Stock'],suffixes=('','_stock')).assign(prec_stock=lambda x: x.n/x.n_stock)
+tera_other_quad = tera_other_quad.query('Stock==Teranet').drop(columns=['Teranet','n']).melt(['name','Stock'],None,'tmp')
+tera_other_quad = pd.concat([tera_other_quad.drop(columns='tmp'),
+    tera_other_quad.tmp.str.split('\\_',1,True).rename(columns={0:'tmp',1:'tt'})],1)
+tera_other_quad = tera_other_quad.pivot_table('value',['name','Stock','tt'],'tmp').reset_index()
+tera_other_quad = tera_other_quad.assign(tt=lambda x: np.where(x.tt=='stock','prec','sens'),
+    value=lambda x: np.where(x.tt=='prec',x.prec,x.sens),
+    n=lambda x: x.n.astype(int)).drop(columns=['prec','sens'])
+tera_other_quad  = tera_other_quad.assign(lb=lambda x: prop_CI(x.value*x.n,x.n,method='beta')[0], ub=lambda x: prop_CI(x.value*x.n,x.n,method='beta')[1])
+
+di_Stock = {'-1':'Negative','1':'Positive'}
+posd = position_dodge(0.5)
+gg_tera_quad = (ggplot(tera_other_quad,aes(x='name',y='value',color='tt')) + 
+    theme_bw() + geom_point(position=posd) + 
+    ggtitle('Since 2010') + 
+    theme(axis_title_x=element_blank(),axis_text_x=element_text(angle=90)) + 
+    geom_linerange(aes(ymin='lb',ymax='ub'),position=posd) + 
+    scale_color_discrete(name='Measure',labels=['Precision','Sensitivty']) + 
+    facet_wrap('~Stock',labeller=labeller(Stock=di_Stock)))
+gg_save('gg_tera_quad.png', dir_figures, gg_tera_quad, 10, 4)
