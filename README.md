@@ -1,4 +1,4 @@
-This repo contains the code necessary to generate all the figures and analysis used for this [post](http://www.erikdrysdale.com/reit_can_short). To replicate the analysis:
+This repo contains the code necessary to generate all the figures and analysis used for this post: [Shorting the Canadian housing market with REITs](http://www.erikdrysdale.com/reit_can_short). To replicate the analysis:
 
 1. Configure the conda environment: `conda env create -f env_reit.yml`
 2. Run the three scripts: `source pipeline.sh`
